@@ -1,0 +1,534 @@
+---
+title: "STATSIM_final"
+output: html_document
+---
+```{R}
+library("ggmap")
+library("mapproj")
+library("ggplot2")
+library("plot3D")
+library("misc3d")
+library("stringr")
+library("lubridate")
+library("rgl")
+library("sp")
+library("rgdal")
+library("MASS")
+library("ks")
+library("raster")
+library("KernSmooth")
+library("oce")
+library("R6")
+library("OSCV")
+library("rgl")
+library("plugdensity")
+library("raster")
+```
+
+```{r}
+# Data preprocessing
+# The following code writes dataA1 and dataA2 to CSV files.
+# If you already have dataA1.csv & dataA2.csv, you can ignore this chunk.
+
+#read data
+setwd("C:/Users/TYDer/OneDrive/Desktop/統計模擬/Statistical-Computing-and-Simulation--Final-presentation")
+dataA1<-read.csv("110年度A1交通事故資料.csv",header=T)
+dataA2<-read.csv("110年度A2交通事故資料(110年1月-6月).csv",header =T) dataA2<-rbind(dataA2,read.csv("110年度A2交通事故資料(110年7月-12月).csv",header = T))
+
+#資料整理
+inj_dea_trans<-function(x){
+  list_injury <- strsplit(x$死亡受傷人數,";")
+  injury1<-c() ; injury2<-c()
+  
+  for(i in 1:nrow(x)){injury1[i]<-list_injury[[i]][1] ; injury2[i]<-list_injury[[i]][2]}
+  injury1<-str_sub(injury1, start = 3, end = 3)
+  injury2<-str_sub(injury2, start = 3, end = 3)
+  injury1<-as.numeric(injury1)
+  injury2<-as.numeric(injury2)
+  
+  temp<-data.frame(x[,1],x[,5],x[,6],injury1,injury2)
+  x<-temp
+  return(x)
+  }
+dataA1<-inj_dea_trans(dataA1)
+dataA2<-inj_dea_trans(dataA2)
+
+#時間格式轉換
+Sys.setlocale("LC_TIME", "C")
+x<-dataA1[,1]
+  a<-paste0(as.numeric(substr(x,1,3))+1911, "-", substr(x,5,6),"-",substr(x,8,9),substr(x,11,13),
+                          ":",substr(x,15,16),":",substr(x,18,19))
+  dataA1[,1]<-ymd_hms(a)
+  b<-paste0(substr(x,11,13),":",substr(x,15,16),":",substr(x,18,19))
+  #c<-as.character(dataA1[,1], format='%H:%M:%S')
+  #d<-as.character(dataA1[,1], format='%Y-%m-%d')
+  y<-3600*as.numeric(substr(b,2,3))+60*as.numeric(substr(b,5,6))+as.numeric(substr(b,8,9))
+  z1<-as.numeric(substr(a,6,7))
+  z2<-as.numeric(substr(a,9,10))
+  z2[which(z1==1|z1==3|z1==5|z1==7|z1==8|z1==10|z1==12)]<-z2[which(z1==1|z1==3|z1==5|z1==7|z1==8|z1==10|z1==12)]/31
+  z2[which(z1==4|z1==6|z1==9|z1==11)]<-z2[which(z1==4|z1==6|z1==9|z1==11)]/30
+  z2[which(z1==2)]<-z2[which(z1==2)]/28
+  dataA1[,6]<-y/3600
+  dataA1[,7]<-z1+z2
+  names(dataA1) = c("發生時間","經度","緯度","死亡","受傷","發生時段(時)","發生日期(月)")
+
+x<-dataA2[,1]
+  a<-paste0(as.numeric(substr(x,1,3))+1911, "-", substr(x,5,6),"-",substr(x,8,9),substr(x,11,13),
+                          ":",substr(x,15,16),":",substr(x,18,19))
+  b<-paste0(substr(x,11,13),":",substr(x,15,16),":",substr(x,18,19))
+               dataA2[,1]<-ymd_hms(a)
+  y<-3600*as.numeric(substr(b,2,3))+60*as.numeric(substr(b,5,6))+as.numeric(substr(b,8,9))
+  #c<-as.character(dataA2[,1], format='%H:%M:%S')
+  z1<-as.numeric(substr(a,6,7))
+  z2<-as.numeric(substr(a,9,10))
+  z2[which(z1==1|z1==3|z1==5|z1==7|z1==8|z1==10|z1==12)]<-z2[which(z1==1|z1==3|z1==5|z1==7|z1==8|z1==10|z1==12)]/31
+  z2[which(z1==4|z1==6|z1==9|z1==11)]<-z2[which(z1==4|z1==6|z1==9|z1==11)]/30
+  z2[which(z1==2)]<-z2[which(z1==2)]/28
+  dataA2[,6]<-y/3600
+  dataA2[,7]<-z1+z2
+  names(dataA2) = c("發生時間","經度","緯度","死亡","受傷","發生時段(時)","發生日期(月)")
+  
+#Write csv
+  write.csv(dataA1,"C:/Users/TYDer/OneDrive/桌面/統模期末/dataA1.csv")
+  write.csv(dataA2,"C:/Users/TYDer/OneDrive/桌面/統模期末/dataA2.csv")
+```
+
+```{r}  
+#read data
+dataA1<-read.csv("C:/Users/TYDer/OneDrive/桌面/統模期末/dataA1.csv")
+dataA2<-read.csv("C:/Users/TYDer/OneDrive/桌面/統模期末/dataA2.csv")  
+```
+
+```{r}
+#Kernel Density Estination
+
+mkde <- function(x, h = NULL, thumb = "silverman") {
+  ## h is the h you want, which is either a vector or a single number
+  ## thumb can be either "none" so the specified h is used, or
+  ## "scott", or "silverman"
+  n <- dim(x)[1]
+  d <- dim(x)[2]  ## sample and dimensionality of x
+
+  if ( is.null(h) ) {
+    if ( thumb == "silverman" ) {
+      s <- Rfast::colVars(x, std = TRUE)
+      h <- ( 4/(d + 2) )^( 1/(d + 4) ) * s * n^( -1/(d + 4) )
+    } else  if ( thumb == "scott" ) {
+      s <- Rfast::colVars(x, std = TRUE)
+      h <- s * n^( -1/(d + 4) )
+    } else if ( thumb == "estim" ) {
+      h <- Compositional::mkde.tune(x)$hopt
+    }
+  }
+
+  if ( length(h) == 1 ) {
+    h <- diag( 1 / h, d )
+  } else h <- diag( 1 / h)
+
+  con <- prod( diag( h ) )
+  y <- x %*%  h
+  a1 <- Rfast::Dist(y, method = "euclidean", square = TRUE)
+  (0.5 / pi)^(d/2) * con * ( Rfast::rowsums( exp( - 0.5 * a1 ) ) - 1 ) / (n - 1)
+}
+```
+
+```{r}
+#地圖設定
+register_google(key = "AIzaSyBqcxjpY7-gBLMaZWsZnIneUHSPl3xUGRo", write = TRUE) 
+map <- get_map(location = 'Taiwan', zoom = 8)
+map<-ggmap(map)
+
+
+lonA1<-dataA1$經度
+lanA1<-dataA1$緯度
+timeA1<-dataA1$`發生時段(時)`
+```
+
+```{r}
+#Histogram
+
+hist(dataA1[,6],xlim=c(0,24),probability =T,xlab="Occur time",main = paste("Histogram of A1 accident"),breaks=24)
+lines(density(dataA1[,6],kernel = "gaussian"), lwd = 2, col = "chocolate3")
+hist(dataA1[,7],xlim=c(1,13),probability =T,xlab="Occur month",main = paste("Histogram of A1 accident"))
+lines(density(dataA1[,7],kernel = "gaussian"), lwd = 2, col = "chocolate3")
+
+hist(dataA2[,6],xlim=c(0,24),probability = T,xlab="Occur time",ylim=c(0,0.10),main = paste("Histogram of A2 accident"))
+lines(density(dataA2[,6],kernel = "gaussian"), lwd = 3, col = "chocolate3")
+hist(dataA2[,7],xlim=c(1,13),probability =T,xlab="Occur month",main = paste("Histogram of A2 accident"),breaks=12)
+lines(density(dataA1[,7],kernel = "gaussian"), lwd = 2, col = "chocolate3")
+
+
+f1 <- kde2d(dataA1[,2], dataA1[,3],
+          n = 50, lims = c(range(dataA1[,2]),range(dataA1[,3])))
+cols <- hcl.colors(10, "YlOrRd")
+map+
+filled.contour(f1, xlab = "previous duration",
+        ylab = "duration", levels  =  c(0.1, 0.3, 0.5, 0.7) )
+ggplot(dataA2, aes(x = dataA2[,2], y = dataA2[,3])) +
+  geom_hex() +
+  guides(fill = guide_colourbar(title = "Count"))+
+  scale_color_viridis_c()
+
+
+bandwidth.nrd(dataA1[,2])
+mkde(as.matrix(dataA1[,2:6]), thumb = "scott" )
+
+
+plotMKDE(mkde.obj, z.index=1, probs=c(0.99, 0.95, 0.90, 0.75, 0.5, 0.0),
+cmap=rev(rainbow(length(probs)-1)), add=FALSE, ...)
+
+x <- rmvnorm.mixt(1000, mus=c(0,0), Sigmas=invvech(c(1,0.8,1)))
+fhat <- kdde(x=x, deriv.order=1) ## gradient [df/dx, df/dy]
+predict(fhat, x=x[1:5,])
+
+
+```
+
+```{R}
+#A1圖表
+col1<-"#r4cde0"
+col2<-"#5500FF"
+
+map+
+  geom_point(aes(x = 經度, y = 緯度, color= col2),data= dataA1, size= 0.5)+
+  theme(legend.position = "bottom")
+
+map+
+geom_density_2d_filled(aes(x = 經度, y = 緯度, fill = ..level.., alpha= 0.3) ,bins= 10, data= dataA1, geom= "polygon",contour=T)  
+
+denA1<-dataA1[,c(2,3,6)]
+dens3d<-kde3d(denA1[,1], denA1[,2], denA1[,3], n = 40)
+
+denA1<-dataA1[,c(2,3,6)] ;denA1[,4]<-round(denA1[,3]/6,0)
+denA1[,4][denA1[,4]==4]<-0
+denA1[,4][denA1[,4]==0]<-"0~6時";denA1[,4][denA1[,4]==1]<-"6~12時";denA1[,4][denA1[,4]==2]<-"12~18時";denA1[,4][denA1[,4]==3]<-"18~24時"
+
+d1 <- ggplot(denA1, aes(denA1[,1], denA1[,2]))
+
+d1 + geom_density_2d_filled() + facet_wrap(vars(denA1[,4]))
+
+```
+
+```{r}
+#Kernel functions
+
+uniform<-function(x){
+  if (abs(x)<=1) return(0.5)
+  else return(0)
+  }
+kde.unif<-function (x, y, z, h, n = 20, lims = c(range(x), range(y), range(z)),...) {
+    nx <- length(x)
+    if (length(y) != nx || length(z) != nx) 
+        stop("data vectors must be the same length")
+    if (missing(h)) 
+        h <- c(MASS::bandwidth.nrd(x), MASS::bandwidth.nrd(y), 
+            MASS::bandwidth.nrd(z))/6
+    else if (length(h) != 3) 
+        h <- rep(h, length = 3)
+    if (length(n) != 3) 
+        n <- rep(n, length = 3)
+    if (length(lims) == 2) 
+        lims <- rep(lims, length = 6)
+    gx <- seq(lims[1], lims[2], length = n[1])
+    gy <- seq(lims[3], lims[4], length = n[2])
+    gz <- seq(lims[5], lims[6], length = n[3])
+    mx<-matrix(NA,n[1],nx)
+        for(i in 1:n[1]){
+        for(j in 1:nx){
+        mx[i,j]<-uniform((gx[i]-x[j])/h[1])
+        }}
+    my<-matrix(NA,n[2],nx)
+        for(i in 1:n[2]){
+        for(j in 1:nx){
+        my[i,j]<-uniform((gy[i]-y[j])/h[2])
+        }}
+    mz<-matrix(NA,n[3],nx)
+        for(i in 1:n[3]){
+        for(j in 1:nx){
+        mz[i,j]<-uniform((gz[i]-z[j])/h[3])
+        }}
+    v <- array(0, n)
+    tmy.nx <- t(my)/nx
+    for (k in 1:n[3]) {
+        tmy.nz.zk <- tmy.nx * mz[k, ]
+        v[, , k] <- mx %*% tmy.nz.zk
+    }
+    return(list(x = gx, y = gy, z = gz, d = v))
+}
+
+Epanechnikov<-function(x){
+  if (abs(x)<=1) return(0.75*(1-x^2))
+  else return(0)
+  }
+kde.Epan<-function (x, y, z, h, n = 20, lims = c(range(x), range(y), range(z)),...) {
+    nx <- length(x)
+    if (length(y) != nx || length(z) != nx) 
+        stop("data vectors must be the same length")
+    if (missing(h)) 
+        h <- c(MASS::bandwidth.nrd(x), MASS::bandwidth.nrd(y), 
+            MASS::bandwidth.nrd(z))/6
+    else if (length(h) != 3) 
+        h <- rep(h, length = 3)
+    if (length(n) != 3) 
+        n <- rep(n, length = 3)
+    if (length(lims) == 2) 
+        lims <- rep(lims, length = 6)
+    gx <- seq(lims[1], lims[2], length = n[1])
+    gy <- seq(lims[3], lims[4], length = n[2])
+    gz <- seq(lims[5], lims[6], length = n[3])
+    mx<-matrix(NA,n[1],nx)
+        for(i in 1:n[1]){
+        for(j in 1:nx){
+        mx[i,j]<-Epanechnikov((gx[i]-x[j])/h[1])
+        }}
+    my<-matrix(NA,n[2],nx)
+        for(i in 1:n[2]){
+        for(j in 1:nx){
+        my[i,j]<-Epanechnikov((gy[i]-y[j])/h[2])
+        }}
+    mz<-matrix(NA,n[3],nx)
+        for(i in 1:n[3]){
+        for(j in 1:nx){
+        mz[i,j]<-Epanechnikov((gz[i]-z[j])/h[3])
+        }}
+    v <- array(0, n)
+    tmy.nx <- t(my)/nx
+    for (k in 1:n[3]) {
+        tmy.nz.zk <- tmy.nx * mz[k, ]
+        v[, , k] <- mx %*% tmy.nz.zk
+    }
+    return(list(x = gx, y = gy, z = gz, d = v))
+}
+
+Triangular<-function(x){
+  if (abs(x)<=1) return(1-abs(x))
+  else return(0)
+  }
+kde.Tri<-function (x, y, z, h, n = 20, lims = c(range(x), range(y), range(z)),...) {
+    nx <- length(x)
+    if (length(y) != nx || length(z) != nx) 
+        stop("data vectors must be the same length")
+    if (missing(h)) 
+        h <- c(MASS::bandwidth.nrd(x), MASS::bandwidth.nrd(y), 
+            MASS::bandwidth.nrd(z))/6
+    else if (length(h) != 3) 
+        h <- rep(h, length = 3)
+    if (length(n) != 3) 
+        n <- rep(n, length = 3)
+    if (length(lims) == 2) 
+        lims <- rep(lims, length = 6)
+    gx <- seq(lims[1], lims[2], length = n[1])
+    gy <- seq(lims[3], lims[4], length = n[2])
+    gz <- seq(lims[5], lims[6], length = n[3])
+    mx<-matrix(NA,n[1],nx)
+        for(i in 1:n[1]){
+        for(j in 1:nx){
+        mx[i,j]<-Triangular((gx[i]-x[j])/h[1])
+        }}
+    my<-matrix(NA,n[2],nx)
+        for(i in 1:n[2]){
+        for(j in 1:nx){
+        my[i,j]<-Triangular((gy[i]-y[j])/h[2])
+        }}
+    mz<-matrix(NA,n[3],nx)
+        for(i in 1:n[3]){
+        for(j in 1:nx){
+        mz[i,j]<-Triangular((gz[i]-z[j])/h[3])
+        }}
+    v <- array(0, n)
+    tmy.nx <- t(my)/nx
+    for (k in 1:n[3]) {
+        tmy.nz.zk <- tmy.nx * mz[k, ]
+        v[, , k] <- mx %*% tmy.nz.zk
+    }
+    return(list(x = gx, y = gy, z = gz, d = v))
+}
+
+```
+
+```{r}
+#KDE function
+
+kde.plot<-function(denA1,den3d){
+datadensity <- approx3d(dens3d$x, dens3d$y, dens3d$z, dens3d$d, 
+                        denA1[,1], denA1[,2], denA1[,3])
+# Find the contours
+#prob <- .5
+#levels <- quantile(datadensity, probs = prob, na.rm = TRUE)
+
+prob <- c(0.25,0.50,0.75)
+levels <- quantile(datadensity, probs = prob, na.rm = TRUE)
+summary(datadensity,na.rm=T)
+# Plot it
+colours <- c("gray","yellow","orange", "red")
+
+cuts <- cut(datadensity, c(0, levels, Inf))
+#for (i in seq_along(levels(cuts))) {
+#  gp <- as.numeric(cuts) == i
+#  spheres3d(denA1[gp,1], denA1[gp,2], denA1[gp,3], col = colours[i], radius = 0.015*i)
+# }
+#box3d(xlim=range(dens3d$x),ylim=range(dens3d$y),zlim=range(dens3d$z))
+#axis3d('x++',labels=T,tick=T)
+#axis3d('y++',labels=T,tick=T)
+#axis3d('z++',labels=T,tick=T)
+
+contour3d(dens3d$d, level = levels, x = dens3d$x, y = dens3d$y, z = dens3d$z,alpha = .15, color = "red", color2 = "yellow", add = TRUE, scale=T)
+box3d(col = "black",xlim=range(dens3d$x),ylim=range(dens3d$y),zlim=range(dens3d$z))
+axis3d('x++',labels=T,tick=T)
+axis3d('y++',labels=T,tick=T)
+axis3d('z++',labels=T,tick=T)
+
+contour3d(dens3d$d, x = dens3d$x,level=levels ,y = dens3d$y, z = dens3d$z, #exp(-12)
+          alpha = .05, color = "orange", color2="red"  ,add = TRUE, scale=T,xlim=range(dens3d$x),ylim=range(dens3d$y),zlim=range(dens3d$z))
+title3d(xlab = "Latitude", ylab = "Longitude", zlab = "Death")
+
+#gr <- grid3d('z')
+#plot3d(cbind(denA1[gp,1:2],rgl.attrib(gr[1],'vertices')[1,3]),col='gray',add=T)
+}
+```
+
+```{r}
+#KDE A1
+#
+# Find the estimated density at each observed point
+dataA1<-read.csv("C:/Users/TYDer/OneDrive/桌面/統模期末/dataA1.csv")
+head(dataA1)
+denA1<-dataA1[,c(2,3,4)]
+denA1[,3]<-denA1[,3]/4 #時間/4
+summary(dataA2$死亡)
+summary(dataA2$受傷)
+
+
+h_bcv<-c(bcv(denA1[,1]),bcv(denA1[,2]),bcv(denA1[,3]))
+h_ucv<-c(ucv(denA1[,1]),ucv(denA1[,2]),ucv(denA1[,3]))
+h_pluin<-c(plugin.density(denA1[,1])[[3]],plugin.density(denA1[,2])[[3]],plugin.density(denA1[,3])[[3]])
+h_std<-c(bandwidth.nrd(denA1[,1]),bandwidth.nrd(denA1[,2]),bandwidth.nrd(denA1[,3]))/6
+
+b_tri<-function(x){2.575*sqrt(var(x))*length(x)^(-1/5)}
+h_tri<-c(b_tri(denA1[,1]),b_tri(denA1[,2]),b_tri(denA1[,3]))
+
+
+h1<-h_ucv
+dens3d<-kde.unif(denA1[,1], denA1[,2], denA1[,3],h=h1)
+kde.plot(denA1,dens3d)
+
+dens3d<-kde.Epan(denA1[,1], denA1[,2], denA1[,3],h=h1)
+kde.plot(denA1,dens3d)
+
+dens3d<-kde.Tri(denA1[,1], denA1[,2], denA1[,3],h=h1)
+kde.plot(denA1,dens3d)
+
+#h_std<-c(bandwidth.nrd(denA1[,1]),bandwidth.nrd(denA1[,2]),bandwidth.nrd(denA1[,3]))/6
+
+
+dens3d<-kde3d(denA1[,1], denA1[,2], denA1[,3])
+kde.plot(denA1,dens3d)
+
+
+
+
+# kde2d(duration[-272], duration[-1],h = rep(0.6, 2), n = 50, lims = c(0.5, 6, 0.5, 6))
+#contour(f1, xlab = "previous duration",ylab = "duration", levels  =  c(0.05, 0.1, 0.2, 0.4) )
+
+summary(denA1$死亡)
+```
+
+```{R}
+#A2圖表
+#散點圖
+map+
+  geom_point(aes(x = 經度, y = 緯度, color= col1),data= dataA2, size= 0.5)+
+  theme(legend.position = "bottom")
+#KDE
+map+
+geom_density_2d_filled(aes(x = 經度, y = 緯度, fill = ..level.., alpha= 0.3) ,bins= 10, data= dataA2, geom= "polygon",contour=T)
+
+
+denA2<-dataA2[,c(2,3,6)]
+
+
+denA2<-dataA2[,c(2,3,6)] ;denA2[,4]<-round(denA2[,3]/6,0)
+denA2[,4][denA2[,4]==4]<-0
+denA2[,4][denA2[,4]==0]<-"0~6時";denA2[,4][denA2[,4]==1]<-"6~12時";denA2[,4][denA2[,4]==2]<-"12~18時";denA2[,4][denA2[,4]==3]<-"18~24時"
+
+d1 <- ggplot(denA2, aes(denA2[,1], denA2[,2]))
+
+d1 + geom_density_2d_filled() + facet_wrap(vars(denA2[,4]))
+```
+
+
+
+```{r}
+# Find the contours
+# Find the estimated density at each observed point
+h<-c(bandwidth.nrd(denA2[,1]),bandwidth.nrd(denA2[,2]),bandwidth.nrd(denA2[,3])/6)
+dens3dA2<-kde3d(denA2[,1], denA2[,2], denA2[,3],h)
+kde(denA2[,1], denA2[,2], denA2[,3],h)
+datadensityA2 <- approx3d(dens3dA2$x, dens3dA2$y, dens3dA2$z, dens3dA2$d, 
+                        denA2[,1], denA2[,2], denA2[,3])
+#prob <- c(0.25,0.50,0.75)
+#levels <- quantile(datadensityA2, probs = prob, na.rm = TRUE)
+prob <- .5
+levels <- quantile(datadensityA2, probs = prob, na.rm = TRUE)
+
+# Plot it
+denA2<-dataA2[,c(2,3,6)]
+denA2[,3]<-denA2[,3]/4
+colours<-c("gray","yellow")
+
+cuts2 <- cut(datadensityA2, c(0, levels, Inf))
+#for (i in seq_along(levels(cuts2))) {
+#  gp <- as.numeric(cuts2) == i
+#  spheres3d(denA2[gp,1], denA2[gp,2], denA2[gp,3], col = colours[i], radius = 0.01)
+#}
+#points3d(denA1[,1], denA1[,2], denA1[,3])
+box3d(col = "black",xlim=range(dens3dA2$x),ylim=range(dens3dA2$y),zlim=range(dens3dA2$z))
+
+# contour3d(dens3dA2$d, x = dens3dA2$x,level=levels ,y = dens3dA2$y, z = dens3dA2$z, #exp(-12)alpha = .1,color = "gray", color2 = "yellow", color3 = "orange",color4="red"  ,add = TRUE, scale=T)
+box3d(col = "black")
+contour3d(dens3dA2$d, x = dens3dA2$x,level=levels ,y = dens3dA2$y, z = dens3dA2$z, #exp(-12)
+          alpha = .1,color = "gray", color2 = "red",add = TRUE, scale=T)
+
+title3d(xlab = "Latitude", ylab = "Longitude", zlab = "Time")
+
+
+
+
+# kde2d(duration[-272], duration[-1],h = rep(0.6, 2), n = 50, lims = c(0.5, 6, 0.5, 6))
+# contour(f1, xlab = "previous duration", ylab = "duration", levels  =  c(0.05, 0.1, 0.2, 0.4) )
+
+```
+
+```{r}
+# dataA2<-read.csv("C:/Users/TYDer/OneDrive/桌面/統模期末/dataA2.csv")
+head(dataA2)
+denA2<-dataA2[,c(2,3,4)]
+#denA2[,3]<-denA2[,3]/4 #時間/4
+
+h_bcv<-c(bcv(denA2[,1]),bcv(denA2[,2]),bcv(denA2[,3]))
+h_ucv<-c(ucv(denA2[,1]),ucv(denA2[,2]),ucv(denA2[,3]))
+h_pluin<-c(plugin.density(denA2[,1])[[3]],plugin.density(denA2[,2])[[3]],plugin.density(denA2[,3])[[3]])
+h_std<-c(bandwidth.nrd(denA2[,1]),bandwidth.nrd(denA2[,2]),bandwidth.nrd(denA2[,3])/6)
+
+b_tri<-function(x){2.575*sqrt(var(x))*length(x)^(-1/5)}
+h_tri<-c(b_tri(denA2[,1]),b_tri(denA2[,2]),b_tri(denA2[,3]))
+
+
+h1<-h_bcv
+dens3d<-kde.unif(denA2[,1], denA2[,2], denA2[,3],h=h1)
+kde.plot(denA2,dens3d)
+
+dens3d<-kde.Epan(denA2[,1], denA2[,2], denA2[,3],h=h1)
+kde.plot(denA2,dens3d)
+
+dens3d<-kde.Tri(denA2[,1], denA2[,2], denA2[,3],h=h1)
+kde.plot(denA2,dens3d)
+
+#h_std<-c(bandwidth.nrd(denA1[,1]),bandwidth.nrd(denA1[,2]),bandwidth.nrd(denA1[,3]))/6
+
+
+dens3d<-kde3d(denA2[,1], denA2[,2], denA2[,3])
+kde.plot(denA1,dens3d)
+summary(denA1[,3])
+
+```
