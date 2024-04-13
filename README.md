@@ -1,0 +1,1 @@
+This analysis utilizes Kernel Density Estimation (KDE) to estimate the distribution of traffic accidents in Taiwan and across different time periods. For details, please refer to `110354016_蔡耀德_統計模擬期末報告.pdf`.
